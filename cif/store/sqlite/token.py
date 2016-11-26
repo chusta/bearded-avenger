@@ -2,10 +2,8 @@ import logging
 import os
 
 import arrow
-from sqlalchemy import Column, Integer, String, DateTime, UnicodeText, Boolean
-from sqlalchemy.ext.declarative import declarative_base
-
-from cifsdk.constants import RUNTIME_PATH
+from sqlalchemy import Column, Integer, String, DateTime, UnicodeText, Boolean, or_, ForeignKey
+from sqlalchemy.orm import relationship, backref
 from cifsdk.constants import PYVERSION
 from pprint import pprint
 from cif.store.sqlite import Base
@@ -31,9 +29,26 @@ class Token(Base):
     write = Column(Boolean)
     revoked = Column(Boolean)
     acl = Column(UnicodeText)
-    groups = Column(UnicodeText)
     admin = Column(Boolean)
     last_activity_at = Column(DateTime)
+
+    groups = relationship(
+        'Group',
+        primaryjoin='and_(Token.id==Group.token_id)',
+        backref=backref('groups', uselist=True),
+        lazy='subquery',
+        cascade="all,delete"
+    )
+    # group = relationship(Group)
+
+
+class Group(Base):
+    __tablename__ = 'groups'
+    id = Column(Integer, primary_key=True)
+    group = Column(UnicodeText, index=True)
+
+    token_id = Column(Integer, ForeignKey('tokens.id', ondelete='CASCADE'))
+    token = relationship(Token)
 
 
 class TokenMixin(object):
@@ -47,26 +62,31 @@ class TokenMixin(object):
             return True
 
     def tokens_create(self, data):
-        groups = data.get('groups')
-        if type(groups) == list:
-            groups = ','.join(groups)
+        s = self.handle()
 
         acl = data.get('acl')
         if type(acl) == list:
             acl = ','.join(acl)
 
+        if data.get('expires'):
+            data['expires'] = arrow.get(data['expires']).datetime
+
         t = Token(
             username=data.get('username'),
             token=self._token_generate(),
-            groups=groups,
             acl=acl,
             read=data.get('read'),
             write=data.get('write'),
             expires=data.get('expires'),
             admin=data.get('admin')
         )
-        s = self.handle()
+        g = Group(
+            group=data.get('group', 'everyone'),
+            token=t
+        )
+
         s.add(t)
+        s.add(g)
         s.commit()
         return self._as_dict(t)
 
@@ -114,20 +134,24 @@ class TokenMixin(object):
         if token in self.token_cache:
             try:
                 if self.token_cache[token]['read'] is True:
-                    return True
+                    return self.token_cache[token]
             except KeyError:
                 pass
 
-        x = self.handle().query(Token) \
+        t = self.handle().query(Token) \
             .filter_by(token=token) \
             .filter_by(read=True) \
-            .filter(Token.revoked is not True)
+            .filter(Token.revoked is not True) \
+            .filter(or_(Token.expires == None, Token.expires > arrow.utcnow().datetime))
 
-        if x.count():
+        if t.count():
             if not self.token_cache.get('token'):
-                self.token_cache[token] = {}
-            self.token_cache[token]['read'] = True
-            return True
+                self.token_cache[token] = self._as_dict(t.first())
+                self.token_cache[token]['groups'] = []
+                for g in t.first().groups:
+                    self.token_cache[token]['groups'].append(g.group)
+
+            return self.token_cache[token]
 
     def token_write(self, token):
         if arrow.utcnow().timestamp > self.token_cache_check:
@@ -137,21 +161,25 @@ class TokenMixin(object):
         if token in self.token_cache:
             try:
                 if self.token_cache[token]['write'] is True:
-                    return True
+                    return self.token_cache[token]
             except KeyError:
                 pass
 
         self.logger.debug('testing token: {}'.format(token))
-        rv = self.handle().query(Token) \
+        t = self.handle().query(Token) \
             .filter_by(token=token) \
             .filter_by(write=True) \
-            .filter(Token.revoked is not True)
+            .filter(Token.revoked is not True) \
+            .filter(or_(Token.expires == None, Token.expires > arrow.utcnow().datetime))
 
-        if rv.count():
+        if t.count():
             if not self.token_cache.get('token'):
-                self.token_cache[token] = {}
-            self.token_cache[token]['write'] = True
-            return True
+                self.token_cache[token] = self._as_dict(t.first())
+                self.token_cache[token]['groups'] = []
+                for g in t.first().groups:
+                    self.token_cache[token]['groups'].append(g.group)
+
+            return self.token_cache[token]
 
     def token_edit(self, data):
         if not data.get('token'):

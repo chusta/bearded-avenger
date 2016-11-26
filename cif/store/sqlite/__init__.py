@@ -22,6 +22,7 @@ DB_FILE = os.path.join(RUNTIME_PATH, 'cif.sqlite')
 logger = logging.getLogger(__name__)
 
 VALID_FILTERS = ['indicator', 'confidence', 'provider', 'itype', 'group', 'tags']
+DEBUGGING = os.environ.get('CIF_STORE_DEBUG')
 
 if PYVERSION > 2:
     basestring = (str, bytes)
@@ -47,8 +48,8 @@ class SQLite(IndicatorMixin, TokenMixin, Store):
         self.path = "sqlite:///{0}".format(self.dbfile)
 
         echo = False
-        # if self.logger.getEffectiveLevel() == logging.DEBUG:
-        #     echo = True
+        if self.logger.getEffectiveLevel() == logging.DEBUG and DEBUGGING:
+            echo = True
 
         # http://docs.sqlalchemy.org/en/latest/orm/contextual.html
         self.engine = create_engine(self.path, echo=echo)

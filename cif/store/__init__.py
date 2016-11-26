@@ -61,8 +61,6 @@ class Store(multiprocessing.Process):
                 self.store = loader.find_module(modname).load_module(modname)
                 self.store = self.store.Plugin(**kwargs)
 
-
-
     def start(self):
         self._load_plugin(**self.kwargs)
         self.context = zmq.Context()
@@ -148,11 +146,11 @@ class Store(multiprocessing.Process):
         return self.store.token_write(token)
 
     def handle_indicators_search(self, token, data):
-        if self.store.token_read(token):
+        u = self.store.token_read(token)
+        if u:
             logger.debug('searching')
             try:
-                x = self.store.indicators_search(data)
-
+                x = self.store.indicators_search(data, user=u)
                 if data.get('indicator'):
                     t = self.store.tokens_search({'token': token})
                     ts = arrow.utcnow().format('YYYY-MM-DDTHH:mm:ss.SSZ')
@@ -164,7 +162,8 @@ class Store(multiprocessing.Process):
                         provider=t[0]['username'],
                         firsttime=ts,
                         lasttime=ts,
-                        reporttime=ts
+                        reporttime=ts,
+                        group=data.get('group', u['groups'][0])
                     )
                     self.store.indicators_create(s.__dict__())
             except Exception as e:
@@ -180,8 +179,9 @@ class Store(multiprocessing.Process):
 
     # TODO group check
     def handle_indicators_create(self, token, data):
-        if self.store.token_write(token):
-            return self.store.indicators_upsert(data)
+        u = self.store.token_write(token)
+        if u:
+            return self.store.indicators_upsert(data, user=u)
         else:
             raise AuthError('invalid token')
 

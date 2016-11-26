@@ -32,7 +32,8 @@ def obs():
     return {
         'indicator': 'example.com',
         'tags': ['botnet'],
-        'provider': 'csirtgadgets.org'
+        'provider': 'csirtgadgets.org',
+        'group': 'everyone',
     }
 
 
@@ -59,6 +60,7 @@ def test_store_sqlite(store):
         'tags': 'malware',
         'provider': 'csirtgadgets.org',
         'lasttime': arrow.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+        'group': 'everyone',
     })
 
     assert x > 0
@@ -68,6 +70,7 @@ def test_store_sqlite(store):
         'tags': 'malware',
         'provider': 'csirtgadgets.org',
         'lasttime': arrow.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%fZ'),
+        'group': 'everyone',
     })
 
     assert x == 1
@@ -80,6 +83,8 @@ def test_store_sqlite(store):
         'indicator': 'example2.com',
         'tags': 'botnet',
         'provider': 'csirtgadgets.org',
+        'group': 'everyone',
+
     })
 
     assert x > 0
@@ -92,7 +97,8 @@ def test_store_sqlite(store):
 
     x = store.handle_indicators_search(t, {
         'indicator': 'example2.com',
-        'tags': 'malware'
+        'tags': 'malware',
+        'group': 'everyone',
     })
 
     assert len(x) == 0
@@ -101,6 +107,7 @@ def test_store_sqlite(store):
         'indicator': '192.168.1.1',
         'tags': 'botnet',
         'provider': 'csirtgadgets.org',
+        'group': 'everyone',
     })
 
     assert x > 0
@@ -121,6 +128,7 @@ def test_store_sqlite(store):
         'indicator': '2001:4860:4860::8888',
         'tags': 'botnet',
         'provider': 'csirtgadgets.org',
+        'group': 'everyone',
     })
 
     assert x > 0

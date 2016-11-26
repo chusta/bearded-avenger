@@ -9,7 +9,7 @@ import json
 from base64 import b64decode, b64encode
 from csirtg_indicator import resolve_itype
 from csirtg_indicator.exceptions import InvalidIndicator
-from cifsdk.exceptions import InvalidSearch
+from cifsdk.exceptions import InvalidSearch, AuthError
 import ipaddress
 from .ip import Ip
 from cif.store.sqlite import Base
@@ -188,8 +188,10 @@ class IndicatorMixin(object):
         return d
 
     # TODO - normalize this out into filters
-    def indicators_search(self, filters, limit=500):
-        self.logger.debug('running search')
+    def indicators_search(self, filters, user={}, limit=500):
+        assert len(user) > 0
+        assert len(filters) > 0
+        self.logger.debug('running search for: %s' % user['username'])
 
         if filters.get('limit'):
             limit = filters['limit']
@@ -198,14 +200,25 @@ class IndicatorMixin(object):
         if filters.get('nolog'):
             del filters['nolog']
 
-        q_filters = {}
-        for f in VALID_FILTERS:
-            if filters.get(f):
-                q_filters[f] = filters[f]
+        # pre-flight check for valid filters
+        for f in filters:
+            if f not in VALID_FILTERS:
+                del filters[f]
+
+        # if user does not specify a group to filter
+        if 'group' not in filters:
+            filters['group'] = user['groups']
+        else:
+            # check to make sure the group they're specifying is legit to their token
+            filters['group'] = filters['group'].split(',')
+            for g in filters['group']:
+                if g not in user['groups']:
+                    if isinstance(filters['group'], list):
+                        filters['group'].remove(g)
+                    else:
+                        filters['group'] = user['groups']
 
         s = self.handle().query(Indicator)
-
-        filters = q_filters
 
         sql = []
 
@@ -259,6 +272,7 @@ class IndicatorMixin(object):
 
             del filters['indicator']
 
+        # TODO these can all become filters...
         for k in filters:
             if k == 'reporttime':
                 sql.append("{} >= '{}'".format('reporttime', filters[k]))
@@ -268,6 +282,8 @@ class IndicatorMixin(object):
                 sql.append("tags.tag == '{}'".format(filters[k]))
             elif k == 'confidence':
                 sql.append("{} >= '{}'".format(k, filters[k]))
+            elif k == 'group':
+                continue
             else:
                 sql.append("{} = '{}'".format(k, filters[k]))
 
@@ -279,14 +295,21 @@ class IndicatorMixin(object):
         if filters.get('tags'):
             s = s.join(Tag)
 
-        rv = s.order_by(desc(Indicator.reporttime)).filter(sql).limit(limit)
+        rv = s.order_by(desc(Indicator.reporttime)) \
+            .filter(sql) \
+            .filter(Indicator.group.in_(filters['group'])) \
+            .limit(limit)
 
         return [self._as_dict(x) for x in rv]
 
-    def indicators_create(self, data):
-        return self.indicators_upsert(data)
+    def indicators_create(self, data, token, user=None):
+        assert user
+        return self.indicators_upsert(data, token, user=user)
 
-    def indicators_upsert(self, data):
+    def indicators_upsert(self, data, user=None):
+        assert data
+        assert user
+
         if type(data) == dict:
             data = [data]
 
@@ -297,6 +320,11 @@ class IndicatorMixin(object):
 
         for d in data:
             self.logger.debug(d)
+            assert d['group']
+            if d['group'] not in user['groups']:
+                s.rollback()
+                raise AuthError('no permission to write to group: %s' % d['group'])
+
             tags = d.get("tags", [])
             if len(tags) > 0:
                 if isinstance(tags, basestring):
